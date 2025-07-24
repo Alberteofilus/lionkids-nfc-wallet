@@ -17,13 +17,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
@@ -40,14 +33,24 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import java.io.IOException
 import java.nio.charset.StandardCharsets
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Remove
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.runtime.Composable
+
+
+
 
 class MainActivity : ComponentActivity() {
     private var nfcAdapter: NfcAdapter? = null
     private var pendingIntent: PendingIntent? = null
     private var currentBalance by mutableStateOf(0)
-    private var currentOperation by mutableStateOf<Pair<Mode, Any>?>(null)
+    private var pendingOperation by mutableStateOf<Pair<Mode, Int>?>(null)
     private var lastReadTag by mutableStateOf<Tag?>(null)
     private var operationResult by mutableStateOf<OperationResult?>(null)
     private var cardInfo by mutableStateOf<CardInfo?>(null)
@@ -57,7 +60,7 @@ class MainActivity : ComponentActivity() {
 
         nfcAdapter = NfcAdapter.getDefaultAdapter(this)
         if (nfcAdapter == null) {
-            showQuickToast("NFC is not available on this device")
+            showToast("NFC is not available on this device")
             finish()
             return
         }
@@ -72,17 +75,17 @@ class MainActivity : ComponentActivity() {
             LionKidsBazzarTheme {
                 LionKidsBazzarApp(
                     currentBalance = currentBalance,
-                    currentOperation = currentOperation,
+                    pendingOperation = pendingOperation,
                     operationResult = operationResult,
                     cardInfo = cardInfo,
                     onBalanceChange = { newBalance -> currentBalance = newBalance },
-                    onWriteToTag = { tag -> writeTag(tag, currentBalance) },
-                    onSetCurrentOperation = { mode, data ->
-                        currentOperation = mode to data
-                        operationResult = OperationResult.WaitingForCard(mode, data)
+                    onWriteToTag = { tag -> writeTag(tag, currentBalance.toString()) },
+                    onSetPendingOperation = { mode, amount ->
+                        pendingOperation = mode to amount
+                        operationResult = OperationResult.WaitingForCard(mode, amount)
                     },
-                    onClearCurrentOperation = {
-                        currentOperation = null
+                    onClearPendingOperation = {
+                        pendingOperation = null
                         operationResult = null
                     },
                     onSetOperationResult = { result -> operationResult = result },
@@ -115,53 +118,44 @@ class MainActivity : ComponentActivity() {
             lastReadTag = it
             readTag(it)
 
-            currentOperation?.let { (mode, data) ->
+            val tagId = bytesToHexString(it.id)
+            val currentName = cardInfo?.name ?: "NFC Card"
+            cardInfo = CardInfo(tagId, currentName)
+
+            pendingOperation?.let { (mode, amount) ->
                 when (mode) {
                     Mode.TOPUP -> {
-                        val amount = data as Int
                         currentBalance += amount
-                        writeTag(it, currentBalance)
+                        writeTag(it, currentBalance.toString())
                         operationResult = OperationResult.Success(
                             mode = Mode.TOPUP,
                             amount = amount,
                             newBalance = currentBalance
                         )
-                        showQuickToast("Top up $amount points successful.")
+                        showToast("Top up $amount points successful. Current balance: $currentBalance points")
                     }
                     Mode.PAYMENT -> {
-                        val amount = data as Int
                         if (amount <= currentBalance) {
                             currentBalance -= amount
-                            writeTag(it, currentBalance)
+                            writeTag(it, currentBalance.toString())
                             operationResult = OperationResult.Success(
                                 mode = Mode.PAYMENT,
                                 amount = amount,
                                 newBalance = currentBalance
                             )
-                            showQuickToast("Payment of $amount points successful.")
+                            showToast("Payment of $amount points successful. Current balance: $currentBalance points")
                         } else {
                             operationResult = OperationResult.Failure(
                                 mode = Mode.PAYMENT,
                                 amount = amount,
                                 message = "Insufficient balance"
                             )
-                            showQuickToast("Insufficient balance")
+                            showToast("Insufficient balance")
                         }
-                    }
-                    Mode.RENAME -> {
-                        val newName = data as String
-                        cardInfo = cardInfo?.copy(name = newName)
-                        writeTag(it, currentBalance)
-                        operationResult = OperationResult.Success(
-                            mode = Mode.RENAME,
-                            amount = 0,
-                            newBalance = currentBalance
-                        )
-                        showQuickToast("Card renamed to $newName")
                     }
                     else -> {}
                 }
-                currentOperation = null
+                pendingOperation = null
             }
         }
     }
@@ -176,28 +170,12 @@ class MainActivity : ComponentActivity() {
                     val record = ndefMessage.records[0]
                     val payload = record.payload
                     val text = String(payload, 3, payload.size - 3, StandardCharsets.UTF_8)
-
-                    // Parse data in format "name|balance"
-                    val parts = text.split("|")
-                    if (parts.size == 2) {
-                        val (name, balanceStr) = parts
-                        currentBalance = balanceStr.toIntOrNull() ?: 0
-                        cardInfo = CardInfo(bytesToHexString(tag.id), name)
-                    } else {
-                        // Default values if format is invalid
-                        currentBalance = 0
-                        cardInfo = CardInfo(bytesToHexString(tag.id), "LionCard")
-                        writeTag(tag, currentBalance) // Write with correct format
-                    }
-                } else {
-                    // Initialize new card with default values
-                    currentBalance = 0
-                    cardInfo = CardInfo(bytesToHexString(tag.id), "LionCard")
-                    writeTag(tag, currentBalance)
+                    currentBalance = text.toIntOrNull() ?: 0
+                    showToast("Current balance: $currentBalance points")
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
-                showQuickToast("Failed to read card")
+                showToast("Failed to read card")
             } finally {
                 try {
                     ndef.close()
@@ -206,18 +184,15 @@ class MainActivity : ComponentActivity() {
                 }
             }
         } else {
-            showQuickToast("Tag does not support NDEF")
+            showToast("Tag does not support NDEF")
         }
     }
 
-    private fun writeTag(tag: Tag, balance: Int) {
+    private fun writeTag(tag: Tag, data: String) {
         val ndef = Ndef.get(tag)
         if (ndef != null) {
             try {
                 ndef.connect()
-                // Format data as "name|balance"
-                val cardName = cardInfo?.name ?: "LionCard"
-                val data = "$cardName|$balance"
                 val message = NdefMessage(
                     arrayOf(
                         NdefRecord.createTextRecord("en", data)
@@ -226,7 +201,7 @@ class MainActivity : ComponentActivity() {
                 ndef.writeNdefMessage(message)
             } catch (e: IOException) {
                 e.printStackTrace()
-                showQuickToast("Failed to write data to card")
+                showToast("Failed to write data to card")
             } finally {
                 try {
                     ndef.close()
@@ -235,7 +210,7 @@ class MainActivity : ComponentActivity() {
                 }
             }
         } else {
-            showQuickToast("Tag does not support NDEF")
+            showToast("Tag does not support NDEF")
         }
     }
 
@@ -253,17 +228,15 @@ class MainActivity : ComponentActivity() {
         return stringBuilder.toString()
     }
 
-    private fun showQuickToast(message: String) {
-        val toast = Toast.makeText(this, message, Toast.LENGTH_SHORT)
-        toast.view?.postDelayed({ toast.cancel() }, 700)
-        toast.show()
+    private fun showToast(message: String) {
+        Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
     }
 }
 
 data class CardInfo(val id: String, var name: String)
 
 sealed class OperationResult {
-    data class WaitingForCard(val mode: Mode, val data: Any) : OperationResult()
+    data class WaitingForCard(val mode: Mode, val amount: Int) : OperationResult()
     data class Success(val mode: Mode, val amount: Int, val newBalance: Int) : OperationResult()
     data class Failure(val mode: Mode, val amount: Int, val message: String) : OperationResult()
 }
@@ -271,18 +244,17 @@ sealed class OperationResult {
 @Composable
 fun LionKidsBazzarApp(
     currentBalance: Int,
-    currentOperation: Pair<Mode, Any>?,
+    pendingOperation: Pair<Mode, Int>?,
     operationResult: OperationResult?,
     cardInfo: CardInfo?,
     onBalanceChange: (Int) -> Unit,
     onWriteToTag: (Tag) -> Unit,
-    onSetCurrentOperation: (Mode, Any) -> Unit,
-    onClearCurrentOperation: () -> Unit,
+    onSetPendingOperation: (Mode, Int) -> Unit,
+    onClearPendingOperation: () -> Unit,
     onSetOperationResult: (OperationResult) -> Unit,
     onUpdateCardInfo: (CardInfo) -> Unit
 ) {
-    var showTopUpDialog by remember { mutableStateOf(false) }
-    var showPaymentDialog by remember { mutableStateOf(false) }
+    var showDialog by remember { mutableStateOf<Mode?>(null) }
     var showCardInfoDialog by remember { mutableStateOf(false) }
     var showEditDialog by remember { mutableStateOf(false) }
     var currentAmount by remember { mutableStateOf(0) }
@@ -324,7 +296,7 @@ fun LionKidsBazzarApp(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Button(
-                    onClick = { showTopUpDialog = true },
+                    onClick = { showDialog = Mode.TOPUP },
                     modifier = Modifier.weight(1f),
                     enabled = operationResult == null,
                     colors = ButtonDefaults.buttonColors(
@@ -336,7 +308,7 @@ fun LionKidsBazzarApp(
                 }
 
                 Button(
-                    onClick = { showPaymentDialog = true },
+                    onClick = { showDialog = Mode.PAYMENT },
                     modifier = Modifier.weight(1f),
                     enabled = operationResult == null,
                     colors = ButtonDefaults.buttonColors(
@@ -385,182 +357,6 @@ fun LionKidsBazzarApp(
                             }
                         ) {
                             Icon(Icons.Default.Edit, contentDescription = "Edit")
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // Top Up Dialog
-    if (showTopUpDialog) {
-        Dialog(
-            onDismissRequest = { showTopUpDialog = false }
-        ) {
-            Surface(
-                modifier = Modifier
-                    .width(300.dp)
-                    .padding(16.dp),
-                shape = MaterialTheme.shapes.medium,
-                color = MaterialTheme.colorScheme.surface
-            ) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Text(
-                        text = "Top Up",
-                        style = MaterialTheme.typography.headlineSmall,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Spacer(modifier = Modifier.height(24.dp))
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(16.dp)
-                    ) {
-                        IconButton(
-                            onClick = { if (currentAmount > 0) currentAmount -= 5 },
-                            colors = IconButtonDefaults.iconButtonColors(
-                                containerColor = Color(0xFFF4BD6C),
-                                contentColor = MaterialTheme.colorScheme.onPrimaryContainer
-                            )
-                        ) {
-                            Icon(Icons.Default.Remove, contentDescription = "Decrease")
-                        }
-                        Text(
-                            text = "$currentAmount points",
-                            style = MaterialTheme.typography.headlineSmall,
-                            fontSize = 24.sp
-                        )
-                        IconButton(
-                            onClick = { currentAmount += 5 },
-                            colors = IconButtonDefaults.iconButtonColors(
-                                containerColor = Color(0xFFF4BD6C),
-                                contentColor = MaterialTheme.colorScheme.onPrimaryContainer
-                            )
-                        ) {
-                            Icon(Icons.Default.Add, contentDescription = "Increase")
-                        }
-                    }
-                    Spacer(modifier = Modifier.height(24.dp))
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(16.dp)
-                    ) {
-                        Button(
-                            onClick = {
-                                if (currentAmount > 0) {
-                                    onSetCurrentOperation(Mode.TOPUP, currentAmount)
-                                    showTopUpDialog = false
-                                }
-                            },
-                            modifier = Modifier.weight(1f),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = Color(0xFFF4BD6C),
-                                contentColor = Color.Black
-                            )
-                        ) {
-                            Text("Confirm")
-                        }
-                        Button(
-                            onClick = {
-                                showTopUpDialog = false
-                                currentAmount = 0
-                            },
-                            modifier = Modifier.weight(1f),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = Color(0xFFFFD1D1),
-                                contentColor = Color(0xFFB00020)
-                            )
-                        ) {
-                            Text("Cancel")
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // Payment Dialog
-    if (showPaymentDialog) {
-        Dialog(
-            onDismissRequest = { showPaymentDialog = false }
-        ) {
-            Surface(
-                modifier = Modifier
-                    .width(300.dp)
-                    .padding(16.dp),
-                shape = MaterialTheme.shapes.medium,
-                color = MaterialTheme.colorScheme.surface
-            ) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Text(
-                        text = "Payment",
-                        style = MaterialTheme.typography.headlineSmall,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Spacer(modifier = Modifier.height(24.dp))
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(16.dp)
-                    ) {
-                        IconButton(
-                            onClick = { if (currentAmount > 0) currentAmount -= 5 },
-                            colors = IconButtonDefaults.iconButtonColors(
-                                containerColor = Color(0xFFF4BD6C),
-                                contentColor = MaterialTheme.colorScheme.onPrimaryContainer
-                            )
-                        ) {
-                            Icon(Icons.Default.Remove, contentDescription = "Decrease")
-                        }
-                        Text(
-                            text = "$currentAmount points",
-                            style = MaterialTheme.typography.headlineSmall,
-                            fontSize = 24.sp
-                        )
-                        IconButton(
-                            onClick = { currentAmount += 5 },
-                            colors = IconButtonDefaults.iconButtonColors(
-                                containerColor = Color(0xFFF4BD6C),
-                                contentColor = MaterialTheme.colorScheme.onPrimaryContainer
-                            )
-                        ) {
-                            Icon(Icons.Default.Add, contentDescription = "Increase")
-                        }
-                    }
-                    Spacer(modifier = Modifier.height(24.dp))
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(16.dp)
-                    ) {
-                        Button(
-                            onClick = {
-                                if (currentAmount > 0) {
-                                    onSetCurrentOperation(Mode.PAYMENT, currentAmount)
-                                    showPaymentDialog = false
-                                }
-                            },
-                            modifier = Modifier.weight(1f),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = Color(0xFFF4BD6C),
-                                contentColor = Color.Black
-                            )
-                        ) {
-                            Text("Confirm")
-                        }
-                        Button(
-                            onClick = {
-                                showPaymentDialog = false
-                                currentAmount = 0
-                            },
-                            modifier = Modifier.weight(1f),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = Color(0xFFFFD1D1),
-                                contentColor = Color(0xFFB00020)
-                            )
-                        ) {
-                            Text("Cancel")
                         }
                     }
                 }
@@ -659,9 +455,9 @@ fun LionKidsBazzarApp(
                         Button(
                             onClick = {
                                 if (editedName.isNotEmpty()) {
-                                    onSetCurrentOperation(Mode.RENAME, editedName)
-                                    showEditDialog = false
+                                    onUpdateCardInfo(cardInfo.copy(name = editedName))
                                 }
+                                showEditDialog = false
                             },
                             modifier = Modifier.weight(1f),
                             colors = ButtonDefaults.buttonColors(
@@ -687,14 +483,16 @@ fun LionKidsBazzarApp(
         }
     }
 
-    // Operation Waiting/Success/Failure Dialog
-    if (operationResult != null) {
+    // Transaction Dialog
+    if (showDialog != null || operationResult != null) {
         Dialog(
             onDismissRequest = {
                 if (operationResult is OperationResult.WaitingForCard) {
                     return@Dialog
                 }
-                onClearCurrentOperation()
+                showDialog = null
+                onClearPendingOperation()
+                currentAmount = 0
             }
         ) {
             Surface(
@@ -711,23 +509,13 @@ fun LionKidsBazzarApp(
                     when (val result = operationResult) {
                         is OperationResult.WaitingForCard -> {
                             Text(
-                                text = when (result.mode) {
-                                    Mode.TOPUP -> "Tap to Top Up"
-                                    Mode.PAYMENT -> "Tap to Pay"
-                                    Mode.RENAME -> "Tap to Rename"
-                                    else -> "Tap Your Card"
-                                },
+                                text = "Tap Your Card",
                                 style = MaterialTheme.typography.headlineSmall,
                                 fontWeight = FontWeight.Bold
                             )
                             Spacer(modifier = Modifier.height(16.dp))
                             Text(
-                                text = when (result.mode) {
-                                    Mode.TOPUP -> "Please tap your NFC card to top up ${result.data} points"
-                                    Mode.PAYMENT -> "Please tap your NFC card to pay ${result.data} points"
-                                    Mode.RENAME -> "Please tap your NFC card to rename to '${result.data}'"
-                                    else -> "Please tap your NFC card"
-                                },
+                                text = "Please tap your NFC card to ${if (result.mode == Mode.TOPUP) "top up" else "pay"} ${result.amount} points",
                                 textAlign = TextAlign.Center,
                                 modifier = Modifier.fillMaxWidth()
                             )
@@ -736,31 +524,27 @@ fun LionKidsBazzarApp(
                         }
                         is OperationResult.Success -> {
                             Text(
-                                text = when (result.mode) {
-                                    Mode.TOPUP -> "Top Up Successful"
-                                    Mode.PAYMENT -> "Payment Successful"
-                                    Mode.RENAME -> "Rename Successful"
-                                    else -> "Operation Successful"
-                                },
+                                text = if (result.mode == Mode.TOPUP) "Top Up Successful" else "Payment Successful",
                                 style = MaterialTheme.typography.headlineSmall,
                                 fontWeight = FontWeight.Bold,
                                 color = Color(0xFF4CAF50)
                             )
                             Spacer(modifier = Modifier.height(16.dp))
                             Text(
-                                text = when (result.mode) {
-                                    Mode.TOPUP -> "Top up of ${result.amount} points completed"
-                                    Mode.PAYMENT -> "Payment of ${result.amount} points completed"
-                                    Mode.RENAME -> "Card renamed successfully"
-                                    else -> "Operation completed"
-                                },
+                                text = "${if (result.mode == Mode.TOPUP) "Top up" else "Payment"} of ${result.amount} points completed",
                                 textAlign = TextAlign.Center,
                                 modifier = Modifier.fillMaxWidth()
+                            )
+                            Text(
+                                text = "Current balance: ${result.newBalance} points",
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(top = 8.dp)
                             )
                             Spacer(modifier = Modifier.height(24.dp))
                             Button(
                                 onClick = {
-                                    onClearCurrentOperation()
+                                    onClearPendingOperation()
+                                    showDialog = null
                                 },
                                 colors = ButtonDefaults.buttonColors(
                                     containerColor = Color(0xFF4CAF50),
@@ -772,12 +556,7 @@ fun LionKidsBazzarApp(
                         }
                         is OperationResult.Failure -> {
                             Text(
-                                text = when (result.mode) {
-                                    Mode.TOPUP -> "Top Up Failed"
-                                    Mode.PAYMENT -> "Payment Failed"
-                                    Mode.RENAME -> "Rename Failed"
-                                    else -> "Operation Failed"
-                                },
+                                text = if (result.mode == Mode.TOPUP) "Top Up Failed" else "Payment Failed",
                                 style = MaterialTheme.typography.headlineSmall,
                                 fontWeight = FontWeight.Bold,
                                 color = Color(0xFFF44336)
@@ -791,7 +570,8 @@ fun LionKidsBazzarApp(
                             Spacer(modifier = Modifier.height(24.dp))
                             Button(
                                 onClick = {
-                                    onClearCurrentOperation()
+                                    onClearPendingOperation()
+                                    showDialog = null
                                 },
                                 colors = ButtonDefaults.buttonColors(
                                     containerColor = Color(0xFFF44336),
@@ -800,7 +580,76 @@ fun LionKidsBazzarApp(
                             ) {
                                 Text("OK")
                             }
-                        }null -> println("Status is null")
+                        }
+                        else -> {
+                            Text(
+                                text = if (showDialog == Mode.TOPUP) "Top Up" else "Payment",
+                                style = MaterialTheme.typography.headlineSmall,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Spacer(modifier = Modifier.height(24.dp))
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(16.dp)
+                            ) {
+                                IconButton(
+                                    onClick = { if (currentAmount > 0) currentAmount -= 5 },
+                                    colors = IconButtonDefaults.iconButtonColors(
+                                        containerColor = Color(0xFFF4BD6C),
+                                        contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                                    )
+                                ) {
+                                    Icon(Icons.Default.Remove, contentDescription = "Decrease")
+                                }
+                                Text(
+                                    text = "$currentAmount points",
+                                    style = MaterialTheme.typography.headlineSmall,
+                                    fontSize = 24.sp
+                                )
+                                IconButton(
+                                    onClick = { currentAmount += 5 },
+                                    colors = IconButtonDefaults.iconButtonColors(
+                                        containerColor = Color(0xFFF4BD6C),
+                                        contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                                    )
+                                ) {
+                                    Icon(Icons.Default.Add, contentDescription = "Increase")
+                                }
+                            }
+                            Spacer(modifier = Modifier.height(24.dp))
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(16.dp)
+                            ) {
+                                Button(
+                                    onClick = {
+                                        if (currentAmount > 0) {
+                                            onSetPendingOperation(showDialog!!, currentAmount)
+                                            currentAmount = 0
+                                        }
+                                    },
+                                    modifier = Modifier.weight(1f),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = Color(0xFFf4bd6c),
+                                        contentColor = Color.Black
+                                    )
+                                ) {
+                                    Text("Confirm")
+                                }
+                                Button(
+                                    onClick = {
+                                        showDialog = null
+                                        currentAmount = 0
+                                    },
+                                    modifier = Modifier.weight(1f),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = Color(0xFFFFD1D1),
+                                        contentColor = Color(0xFFB00020)
+                                    )
+                                ) {
+                                    Text("Cancel")
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -827,7 +676,7 @@ fun LionKidsBazzarTheme(
 }
 
 enum class Mode {
-    VIEW, TOPUP, PAYMENT, RENAME
+    VIEW, TOPUP, PAYMENT
 }
 
 @Preview(showBackground = true, showSystemUi = true)
@@ -836,13 +685,13 @@ fun PreviewLionKidsBazzarApp() {
     LionKidsBazzarTheme {
         LionKidsBazzarApp(
             currentBalance = 100,
-            currentOperation = null,
+            pendingOperation = null,
             operationResult = null,
-            cardInfo = CardInfo("0x0123456789ABCDEF", "LionCard"),
+            cardInfo = CardInfo("0x0123456789ABCDEF", "NFC Card"),
             onBalanceChange = {},
             onWriteToTag = {},
-            onSetCurrentOperation = { _, _ -> },
-            onClearCurrentOperation = {},
+            onSetPendingOperation = { _, _ -> },
+            onClearPendingOperation = {},
             onSetOperationResult = {},
             onUpdateCardInfo = {}
         )
